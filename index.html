@@ -542,7 +542,7 @@ body { background:var(--bg); color:var(--text); font-family:var(--font); min-hei
     <div class="card-ttl">📋 인바디 측정 기록</div>
     <div style="margin-bottom:12px">
       <div style="font-size:12px;color:var(--text2);margin-bottom:4px">측정일</div>
-      <input type="date" id="ibDate" class="ifield" style="width:100%;text-align:left">
+      <input type="date" id="ibDate" class="ifield" style="width:100%;text-align:left" onchange="fillIbByDate(this.value)">
     </div>
     <div class="ib-grid">
       <div class="ib-cell"><label>체중</label><input type="number" id="ibW" placeholder="63.4" step="0.1"><div class="unit">kg</div></div>
@@ -590,6 +590,13 @@ body { background:var(--bg); color:var(--text); font-family:var(--font); min-hei
   <div class="card">
     <div class="card-ttl">✅ 이번 주 루틴 달성률</div>
     <div class="wbars" id="wkBars"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-ttl">🤖 종합 AI 코치</div>
+    <div style="font-size:13px;color:var(--text2);margin-bottom:12px;">루틴 7일 + 인바디 데이터를 함께 분석해서<br>식단·영양제·운동 방향을 알려드려요</div>
+    <button class="ai-btn" id="btnHistAI" onclick="runHistAI()">종합 분석 받기 ✦</button>
+    <div class="ai-coach" id="aiHistCoach"></div>
   </div>
 </div>
 
@@ -1016,12 +1023,24 @@ function fillIbLatest() {
   if (!ibArr.length) return;
   var r = ibArr[ibArr.length-1];
   document.getElementById('ibDate').value = r.date;
-  if (r.weight) { document.getElementById('ibW').value = r.weight; document.getElementById('ibCurW').textContent = r.weight+'kg'; }
-  if (r.muscle) document.getElementById('ibM').value   = r.muscle;
-  if (r.fat)    document.getElementById('ibF').value   = r.fat;
-  if (r.bmi)    document.getElementById('ibBMI').value = r.bmi;
-  if (r.fatPct) document.getElementById('ibFP').value  = r.fatPct;
-  if (r.bmr)    document.getElementById('ibBMR').value = r.bmr;
+  fillIbByDate(r.date);
+}
+
+function fillIbByDate(dateStr) {
+  var r = ibArr.find(function(x) { return x.date === dateStr; });
+  if (r) {
+    document.getElementById('ibW').value   = r.weight || '';
+    document.getElementById('ibM').value   = r.muscle || '';
+    document.getElementById('ibF').value   = r.fat    || '';
+    document.getElementById('ibBMI').value = r.bmi    || '';
+    document.getElementById('ibFP').value  = r.fatPct || '';
+    document.getElementById('ibBMR').value = r.bmr    || '';
+    if (r.weight) document.getElementById('ibCurW').textContent = r.weight+'kg';
+  } else {
+    ['ibW','ibM','ibF','ibBMI','ibFP','ibBMR'].forEach(function(id) {
+      document.getElementById(id).value = '';
+    });
+  }
 }
 
 async function runIbAI() {
@@ -1065,6 +1084,68 @@ async function runIbAI() {
   }
   btn.disabled = false;
   btn.textContent = '인바디 데이터 코치에게 보여주기 ✦';
+}
+
+/* ──────────────────────────────────────
+   HISTORY AI COACH
+────────────────────────────────────── */
+async function runHistAI() {
+  var btn = document.getElementById('btnHistAI');
+  var box = document.getElementById('aiHistCoach');
+  btn.disabled = true;
+  btn.textContent = '전체 기록 살펴보는 중 👀';
+  box.innerHTML = '<div class="ai-loading">분석하는 중<span class="ai-dot">.</span><span class="ai-dot">.</span><span class="ai-dot">.</span></div>';
+  box.className = 'ai-coach show';
+
+  var routineSummary = [];
+  for (var i = 6; i >= 0; i--) {
+    var d = new Date(); d.setDate(d.getDate()-i);
+    var ds = d.getFullYear()+'-'+p2(d.getMonth()+1)+'-'+p2(d.getDate());
+    var day = data[ds] || {};
+    routineSummary.push({
+      date: ds,
+      score: calcScore(ds),
+      done: CHECK_KEYS.filter(function(k){ return day[k]===true; }),
+      eggs: (day.eggB||0)+(day.eggL||0)+(day.eggD||0),
+      prot: day.prot||0,
+      meals: [day.mealB, day.mealL, day.mealD].filter(Boolean)
+    });
+  }
+
+  var latestIb = ibArr.length ? ibArr[ibArr.length-1] : null;
+
+  var prompt = '너는 건강 코치야. 아래 7일 루틴 기록과 최신 인바디 수치를 보고 종합 분석해줘.\n' +
+    '목표: 체지방률 20%, 골격근량 23.5kg 이상, 바디프로필 촬영.\n' +
+    '키 159cm, 현재 체중 약 62-63kg.\n\n' +
+    '최신 인바디: ' + (latestIb ? JSON.stringify(latestIb) : '없음') + '\n\n' +
+    '최근 7일 루틴: ' + JSON.stringify(routineSummary) + '\n\n' +
+    '짧고 실용적으로 코치처럼 말해줘. 아래 JSON으로만 답해:\n' +
+    '{"summary":"전체 한 줄 평가","diet":"식단 보완점 구체적으로","supplement":"영양제 조정 제안","exercise":"운동 방향 제안"}';
+
+  try {
+    var res = await fetch(SCRIPT_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ type: 'coach', prompt: prompt })
+    });
+    var j = await res.json();
+    var txt = j.analysis || j.result || '';
+    var parsed = null;
+    try { var m = txt.match(/\{[\s\S]*\}/); if (m) parsed = JSON.parse(m[0]); } catch(e){}
+    if (parsed) {
+      box.innerHTML =
+        '<div class="ai-section"><div class="ai-section-ttl">종합 평가</div><div class="ai-section-body">' + esc(parsed.summary) + '</div></div>' +
+        '<div class="ai-section"><div class="ai-section-ttl">🥗 식단 보완</div><div class="ai-section-body">' + esc(parsed.diet) + '</div></div>' +
+        '<div class="ai-section"><div class="ai-section-ttl">💊 영양제 조정</div><div class="ai-section-body">' + esc(parsed.supplement) + '</div></div>' +
+        '<div class="ai-section"><div class="ai-section-ttl">🏋️ 운동 방향</div><div class="ai-section-body">' + esc(parsed.exercise) + '</div></div>';
+    } else {
+      box.innerHTML = '<div class="ai-section"><div class="ai-section-body">' + esc(txt || '분석이 잠시 끊겼어요. 다시 시도해보세요.') + '</div></div>';
+    }
+  } catch(e) {
+    box.innerHTML = '<div class="ai-section"><div class="ai-section-body">분석이 잠시 끊겼어요. 잠깐 후 다시 시도해보세요.</div></div>';
+  }
+  btn.disabled = false;
+  btn.textContent = '종합 분석 받기 ✦';
 }
 
 /* ──────────────────────────────────────
