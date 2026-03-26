@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>건강 추적기</title>
+
+<style>
+body { background:#0b0b0b; color:white; font-family:sans-serif; margin:0; padding:20px;}
+.card { background:#1a1a1a; padding:16px; border-radius:14px; margin-bottom:14px;}
+.check-item { padding:12px; margin:6px 0; border-radius:10px; background:#222; cursor:pointer;}
+.checked { background:#4caf50;}
+input { width:100%; padding:10px; margin-top:6px; border-radius:8px; border:none;}
+.small { color:#aaa; font-size:13px; margin-top:6px;}
+</style>
+</head>
+
+<body>
+
+<h2 id="date"></h2>
+
+<div class="card" id="dashboard"></div>
+
+<div class="card">
+<h3>체크리스트 (15개)</h3>
+<div id="checklist"></div>
+</div>
+
+<div class="card">
+<h3>기록</h3>
+기상시간 <input id="wakeTime" type="time">
+수면시간 <input id="sleepTime" type="time">
+체지방률 <input id="bodyFat" type="number" placeholder="예: 18.5">
+</div>
+
+<div class="card">
+<h3>히스토리</h3>
+<div id="history"></div>
+</div>
+
+<script>
+// ================= 데이터 =================
+const CHECKLIST = [
+"물 2L","운동","영양제","단백질 섭취","야식 금지",
+"스트레칭","걷기","카페인 제한","야채 섭취","수면 7시간",
+"아침 기상","가공식품 제한","집중 시간","명상","일지 작성"
+];
+
+let currentDate = new Date();
+let allData = JSON.parse(localStorage.getItem('tracker')||"{}");
+
+function key(d){ return d.toISOString().split('T')[0]; }
+
+function getData(){
+  let k = key(currentDate);
+  if(!allData[k]) allData[k]={};
+  return allData[k];
+}
+
+// ================= 점수 =================
+function calcScore(data){
+  let score = 0;
+
+  let done = 0;
+  CHECKLIST.forEach((_,i)=>{ if(data["c"+i]) done++; });
+
+  score += (done/15)*60;
+
+  if(data.sleepTime) score+=10;
+  if(data.wakeTime) score+=10;
+  if(data.bodyFat) score+=5;
+
+  return Math.round(Math.min(score,100));
+}
+
+// ================= 스트릭 =================
+function streak(){
+  let c=0;
+  let d=new Date();
+
+  while(true){
+    let k=key(d);
+    if(allData[k] && calcScore(allData[k])>=70){
+      c++; d.setDate(d.getDate()-1);
+    } else break;
+  }
+  return c;
+}
+
+// ================= 주간 =================
+function weekly(){
+  let sum=0,cnt=0;
+
+  for(let i=0;i<7;i++){
+    let d=new Date();
+    d.setDate(d.getDate()-i);
+    let k=key(d);
+    if(allData[k]){
+      sum+=calcScore(allData[k]);
+      cnt++;
+    }
+  }
+  return cnt?Math.round(sum/cnt):0;
+}
+
+// ================= 코치 =================
+function coach(data){
+  let s=calcScore(data);
+  let w=weekly();
+
+  if(s<50) return "👉 오늘은 1개만 완료하세요.";
+  if(w<60) return "👉 루틴이 깨졌습니다. 기본부터.";
+  if(!data.sleepTime) return "👉 수면 먼저 잡으세요.";
+  return "🔥 유지하면 체지방 내려갑니다.";
+}
+
+// ================= UI =================
+function render(){
+  let data=getData();
+  let s=calcScore(data);
+
+  document.getElementById("date").innerText=key(currentDate);
+
+  document.getElementById("dashboard").innerHTML=`
+    <div>점수: ${s}</div>
+    <div>🔥 ${streak()}일 연속</div>
+    <div>📊 주간 평균 ${weekly()}</div>
+    <div>🎯 목표까지 ${Math.max(85-s,0)}</div>
+    <div class="small">${coach(data)}</div>
+  `;
+
+  // 체크리스트
+  let html="";
+  CHECKLIST.forEach((txt,i)=>{
+    html+=`
+      <div class="check-item ${data["c"+i]?"checked":""}" 
+      onclick="toggle(${i})">${txt}</div>
+    `;
+  });
+  document.getElementById("checklist").innerHTML=html;
+
+  // 입력
+  document.getElementById("wakeTime").value=data.wakeTime||"";
+  document.getElementById("sleepTime").value=data.sleepTime||"";
+  document.getElementById("bodyFat").value=data.bodyFat||"";
+
+  // 히스토리
+  let h="";
+  Object.keys(allData).sort().reverse().slice(0,7).forEach(d=>{
+    let dd=allData[d];
+    h+=`<div>${d} | 점수:${calcScore(dd)} | 체지방:${dd.bodyFat||"-"}</div>`;
+  });
+  document.getElementById("history").innerHTML=h;
+}
+
+// ================= 저장 =================
+function save(){
+  let data=getData();
+  data.wakeTime=document.getElementById("wakeTime").value;
+  data.sleepTime=document.getElementById("sleepTime").value;
+  data.bodyFat=parseFloat(document.getElementById("bodyFat").value)||"";
+
+  localStorage.setItem("tracker",JSON.stringify(allData));
+}
+
+// ================= 이벤트 =================
+function toggle(i){
+  let data=getData();
+  data["c"+i]=!data["c"+i];
+  save(); render();
+}
+
+["wakeTime","sleepTime","bodyFat"].forEach(id=>{
+  document.getElementById(id).addEventListener("change",()=>{
+    save(); render();
+  });
+});
+
+// ================= 시작 =================
+render();
+
+</script>
+
+</body>
+</html>
